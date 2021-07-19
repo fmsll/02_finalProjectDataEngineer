@@ -37,6 +37,7 @@ raw_table = spark.sql("select * from covid19.covid19_particionada_estado")
 raw_table.createOrReplaceTempView("visualizacao1")
 
 # PRIMEIRA VISUALIZAÇÃO
+
 # Query para criação da tabela Hive com as informações: Casos Recuperados, Em Acompanhamento
 query_visualizacao1 = 'create table covid19.visualizacao1 SELECT ' \
                       'recuperadosnovos CasosRecuperados, ' \
@@ -47,6 +48,7 @@ spark.sql(query_visualizacao1)
 
 
 # SEGUNDA VISUALIZAÇÃO
+
 # Realiza filtro para buscar o número da população mais atual
 filter_populacao = raw_table.filter(default_filter_condition).select("populacaotcu2019").collect()
 populacao_total = float(filter_populacao[0].populacaotcu2019)
@@ -69,7 +71,39 @@ visualizacao2DF = spark.createDataFrame([(str("{0:.0f}".format(value_casos_acumu
 # Salva a segunda visualização em formato parquet com compressão snappy
 visualizacao2DF.write.parquet("/user/visualizacao2.parquet", compression="snappy")
 
-# Síntese de casos, óbitos, incidência e mortalidade
+
+# TERCEIRA VISUALIZAÇÃO
+# Filtro para buscar o número de obitos acumulados
+# Extrai o valor do resultado do filtro de obitos acumulados
+obitos_acumulados = raw_table.filter(default_filter_condition).select("obitosacumulado").collect()
+value_obitos_acumulados = obitos_acumulados[0].obitosacumulado
+# Filtro para buscar o número de óbitos nas últimas 24h
+# Extrai o valor do resultado do filtro de óbitos nas últimas 24h
+obitos_ultimas_24h = raw_table.filter(default_filter_condition).select("obitosnovos").collect()
+value_obitos_24h = obitos_ultimas_24h[0].obitosnovos
+# Calcula a letalidade
+letalidade = "{0:.1%}".format(float(value_obitos_acumulados) / float(value_casos_acumulados))
+# Calcula Mortalidade
+mortalidade = formatacao.format((value_obitos_acumulados/populacao_total)*100000)
+# Criação do DataFrame com as informações da visualização 3
+visualizacao3_DF = spark.createDataFrame([("Obitos Acumulados", str(value_obitos_acumulados)),
+                                          ("Casos Novos", str(value_obitos_24h)),
+                                          ("Letalidade", str(letalidade)),
+                                          ("Mortalidade", str(mortalidade))],
+                                         ("key",
+                                          "value")
+                                         )
+# Prepara envio das informações para o KAFKA
+visualizacao3_DF_send_topic = visualizacao3_DF.write\
+    .format("kafka")\
+    .option("kafka.bootstrap.servers", "kafka:9092")\
+    .option("topic", "visualizacao3")\
+# Envio das informações para o kafka
+visualizacao3_DF_send_topic.save()
+
+
+# SÍNTESE DE CASOS, ÓBITOS, INCIDÊNCIA E MORTALIDADE
+
 # Select realizado na tabela principal para selecionar os dados mais atuais
 relatorio = raw_table.select("regiao", "estado", "obitosacumulado","casosacumulado", "populacaotcu2019")\
     .where('data="' + usar_dia + '" and municipio=""')

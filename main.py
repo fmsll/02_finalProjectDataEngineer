@@ -1,8 +1,10 @@
 # Este Spark Application faz parte do projeto final do treinamento Engenheiro de Dados realizado pela Semantix Academy
 
 from pyspark.sql import *
+from pyspark.sql.functions import *
 from pyspark.conf import SparkConf
 from datetime import date, timedelta
+from time import sleep
 
 # VARIÁVEIS OBRIGATÓRIAS
 # Identificando o dia atual e o dia anterior;
@@ -14,7 +16,7 @@ yesterday_str = yesterday.strftime("%Y-%m-%d")
 # Aqui é escolhido o dia que será usado como base para gerar as visualizações
 # Por default o valor é o dia atual, caso queira consulta o dia de ontem pode-se usar trocar para yesterday_str
 # Caso queira escolher outra data é necessário especificar uma nova data no formato "yyyy-MM-dd"
-usar_dia = today_str
+usar_dia = yesterday_str
 # Condição padrão para filtro das informações do dia anterior
 default_filter_condition = 'regiao="Brasil" and data="' + usar_dia + '"'
 # Formatação de resultados
@@ -66,5 +68,19 @@ visualizacao2DF = spark.createDataFrame([(str("{0:.0f}".format(value_casos_acumu
                                         )
 # Salva a segunda visualização em formato parquet com compressão snappy
 visualizacao2DF.write.parquet("/user/visualizacao2.parquet", compression="snappy")
+
+# Síntese de casos, óbitos, incidência e mortalidade
+# Select realizado na tabela principal para selecionar os dados mais atuais
+relatorio = raw_table.select("regiao", "estado", "obitosacumulado","casosacumulado", "populacaotcu2019")\
+    .where('data="' + usar_dia + '" and municipio=""')
+# Gera a visualização agrupada por Região e Estado
+# Cada linha terá o cálculo de Incidência e Mortalidade baseada na população do respectivo estado
+relatorio.groupBy(["regiao", "estado"])\
+    .agg(max("casosacumulado").alias("Casos Acumulados"),
+         max("obitosacumulado").cast("float").alias("Obitos Acumulados"),
+         format_number(((max("casosacumulado").cast("float")/max("populacaotcu2019").cast("float"))*100000), 1).alias("Incidência"),
+         format_number(((max("obitosacumulado").cast("float")/max("populacaotcu2019").cast("float"))*100000), 1).alias("Mortalidade"),
+         )\
+    .sort("regiao").show(100)
 
 spark.stop()
